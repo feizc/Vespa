@@ -1,2 +1,2 @@
-## VSSD: Video State-Space Diffusion Models
+## Vespa: Video State-Space Diffusion Models
 
