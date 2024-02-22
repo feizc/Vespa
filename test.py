@@ -104,7 +104,15 @@ def test_coco():
     print(dataset[0])
 
 
-test_clip() 
+
+def test_mjdataset(): 
+    from tools.dataset import MJDataset 
+    data_path = '/TrainData/Multimodal/public/datasets_gen/mj580w/cleaned_mj_580w.json' 
+    dataset = MJDataset(path=data_path)
+    print(dataset[0])
+
+test_mjdataset()
+# test_clip() 
 # test_vespa() 
 # test_coco()
 # test_cifar10()
