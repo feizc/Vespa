@@ -9,12 +9,12 @@ from torchvision.utils import save_image
 from diffusers.models import AutoencoderKL
 
 from diffusion import create_diffusion
-from models_dis import DiS_models 
-
+from models_vespa import VeSpa_models 
+from clip import FrozenCLIPEmbedder
 
 
 def main(args):
-    print("Sample images from a trained DiS.")
+    print("Sample images from a trained vespa model.")
     # Setup PyTorch:
     torch.manual_seed(args.seed)
     torch.set_grad_enabled(False) 
@@ -23,13 +23,11 @@ def main(args):
     if args.latent_space == True: 
         model = DiS_models[args.model](
             img_size=args.image_size // 8,
-            num_classes=args.num_classes,
             channels=4,
         ) 
     else:
         model = DiS_models[args.model](
             img_size=args.image_size,
-            num_classes=args.num_classes,
             channels=3,
         ) 
 
@@ -37,20 +35,20 @@ def main(args):
     model.load_state_dict(checkponit) 
     model = model.to(device)
     model.eval() 
+
     diffusion = create_diffusion(str(args.num_sampling_steps)) 
     if args.latent_space == True: 
         vae = AutoencoderKL.from_pretrained(args.vae_path).to(device)
 
+    clip = FrozenCLIPEmbedder(
+        path='/TrainData/Multimodal/michael.fan/ckpts/sdxl-turbo',
+        device=device,
+    )
+    clip.eval()
+    clip = clip.to(device)
     
-    n = 8
-    if args.num_classes > 0: 
-        class_labels=[]
-        for i in range(n):
-            class_labels.append(random.randint(0, args.num_classes - 1))
-            y = torch.tensor(class_labels, device=device)
-            y_null = torch.tensor([args.num_classes] * n, device=device)
-    
-            y = torch.cat([y, y_null], 0)
+    n = 1
+    text = ['a cute cat in grass']
     
     if args.latent_space == True: 
         z = torch.randn(n, 4, args.image_size//8, args.image_size//8, device=device)
@@ -58,14 +56,12 @@ def main(args):
         z = torch.randn(n, 3, args.image_size, args.image_size, device=device)
     
     # Setup classifier-free guidance:
-    z = torch.cat([z, z], 0)
+    # z = torch.cat([z, z], 0)
     
-    if args.num_classes > 0: 
-        labels = y
-    else:
-        labels = None
+    with torch.no_grad(): 
+        context = clip.encode(text)
 
-    model_kwargs = dict(labels=labels,)
+    model_kwargs = dict(labels=context,)
     # Sample images:
     samples = diffusion.p_sample_loop(
         model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
@@ -81,13 +77,12 @@ def main(args):
 
 if __name__ == "__main__": 
     parser = argparse.ArgumentParser() 
-    parser.add_argument("--model", type=str, choices=list(DiS_models.keys()), default="DiS-H/2")
-    parser.add_argument("--image-size", type=int, choices=[32, 64, 256, 512], default=256)
-    parser.add_argument("--num-classes", type=int, default=1000)
+    parser.add_argument("--model", type=str, choices=list(VeSpa_models.keys()), default="VeSpa-H/2")
+    parser.add_argument("--image-size", type=int, choices=[32, 64, 256, 512], default=256) 
     parser.add_argument("--cfg-scale", type=float, default=1.5) 
     parser.add_argument("--num-sampling-steps", type=int, default=250) 
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/dis/results/DiS-H-2-imagenet-class-cond-256/checkpoints/ckpt.pt",) 
+    parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results/VeSpa-H-2-mscoco-256/checkpoints/0002500.pt",) 
     
     parser.add_argument('--latent_space', type=bool, default=True,) 
     parser.add_argument('--vae_path', type=str, default='/TrainData/Multimodal/zhengcong.fei/dis/vae') 
