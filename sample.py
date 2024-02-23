@@ -21,12 +21,12 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if args.latent_space == True: 
-        model = DiS_models[args.model](
+        model = VeSpa_models[args.model](
             img_size=args.image_size // 8,
             channels=4,
         ) 
     else:
-        model = DiS_models[args.model](
+        model = VeSpa_models[args.model](
             img_size=args.image_size,
             channels=3,
         ) 
@@ -47,8 +47,8 @@ def main(args):
     clip.eval()
     clip = clip.to(device)
     
-    n = 1
-    text = ['a cute cat in grass']
+    n = 2
+    text = ['a cute cat in grass', 'a dog cat in grass']
     
     if args.latent_space == True: 
         z = torch.randn(n, 4, args.image_size//8, args.image_size//8, device=device)
@@ -61,7 +61,7 @@ def main(args):
     with torch.no_grad(): 
         context = clip.encode(text)
 
-    model_kwargs = dict(labels=context,)
+    model_kwargs = dict(context=context,)
     # Sample images:
     samples = diffusion.p_sample_loop(
         model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
