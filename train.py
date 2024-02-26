@@ -23,7 +23,7 @@ from diffusers.models import AutoencoderKL
 
 from models_vespa import VeSpa_models 
 from diffusion import create_diffusion
-from tools.dataset import MSCOCODataset  
+from tools.dataset import MSCOCODataset, MJDataset 
 from clip import FrozenCLIPEmbedder
 
 @torch.no_grad()
@@ -138,6 +138,7 @@ def main(args):
     
 
     transform = transforms.Compose([
+        transforms.Resize(args.image_size),
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
@@ -156,6 +157,11 @@ def main(args):
         dataset = MSCOCODataset(
             root=args.data_path,
             annFile=args.anna_path, 
+            transform=transform,
+        )
+    elif args.dataset_type == "mj": 
+        dataset = MJDataset(
+            path=args.anna_path, 
             transform=transform,
         )
     else:
@@ -200,7 +206,7 @@ def main(args):
                 
                 x = samples[0].to(device) 
                 y = samples[1]
-                
+
                 with torch.no_grad():
                     context = clip.encode(y)
 
@@ -287,14 +293,14 @@ if __name__ == "__main__":
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--anna-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results")
-    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'laion'], default='mscoco')
+    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'laion', 'mj'], default='mscoco')
     parser.add_argument("--resume", type=str, default=None)
     
     parser.add_argument("--model", type=str, choices=list(VeSpa_models.keys()), default="VeSpa-L/2")
     parser.add_argument("--image-size", type=int, choices=[256, 512, 64, 32], default=256)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=1000)
-    parser.add_argument("--ckpt-every", type=int, default=5000)
+    parser.add_argument("--ckpt-every", type=int, default=3000)
     parser.add_argument("--global-batch-size", type=int, default=128)
     parser.add_argument("--global-seed", type=int, default=420) 
 

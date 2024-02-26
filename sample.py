@@ -47,8 +47,8 @@ def main(args):
     clip.eval()
     clip = clip.to(device)
     
-    n = 2
-    text = ['a cute cat in grass', 'a dog cat in grass']
+    n = 4
+    text = ['a cute cat in grass', 'water with ocean', 'a cute cat in grass', 'water with ocean',]
     
     if args.latent_space == True: 
         z = torch.randn(n, 4, args.image_size//8, args.image_size//8, device=device)
