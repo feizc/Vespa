@@ -21,10 +21,12 @@ from tqdm import tqdm
 from torchvision.utils import save_image
 from diffusers.models import AutoencoderKL 
 
-from models_vespa import VeSpa_models 
+from einops import rearrange, repeat
+from models_vespa import VeSpa_image_models, VeSpa_video_models 
 from diffusion import create_diffusion
-from tools.dataset import MSCOCODataset, MJDataset 
+from tools.dataset import MSCOCODataset, MJDataset, UCFDataset 
 from clip import FrozenCLIPEmbedder
+
 
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
@@ -100,29 +102,47 @@ def main(args):
         os.makedirs(args.results_dir, exist_ok=True) 
         experiment_index = len(glob(f"{args.results_dir}/*"))
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-        experiment_dir = f"{args.results_dir}/{model_string_name}-{args.dataset_type}-{args.image_size}"  # Create an experiment folder
+        experiment_dir = f"{args.results_dir}/{model_string_name}-{args.dataset_type}-{args.model_type}-{args.image_size}"  # Create an experiment folder
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
         os.makedirs(checkpoint_dir, exist_ok=True)
     
     if args.latent_space == True: 
-        model = VeSpa_models[args.model](
-            img_size=args.image_size // 8,
-            channels=4,
+        img_size = args.image_size // 8
+        channels = 4
+    else: 
+        img_size=args.image_size
+        channels = 3
+
+    if args.model_type == 'image': 
+        model = VeSpa_image_models[args.model](
+            img_size=img_size,
+            channels=channels,
         ) 
     else:
-        model = VeSpa_models[args.model](
-            img_size=args.image_size,
-            channels=3,
+        model = VeSpa_video_models[args.model](
+            img_size=img_size,
+            channels=channels,
+            enable_temporal_layers= not args.image_only, 
         ) 
 
     if args.resume is not None:
         print('resume model')
         checkponit = torch.load(args.resume, map_location=lambda storage, loc: storage)['ema'] 
         
-        model.load_state_dict(checkponit) 
+        if args.image_only == False: 
+            model.load_state_dict(checkponit, strict=False) 
+        else:
+            model.load_state_dict(checkponit) 
+
 
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
+
+    if args.image_only == False: 
+        model.requires_grad_(False)
+        temporal_params = model.temporal_parameters()
+        for p in temporal_params:
+            p.requires_grad_(True) 
 
     model = DDP(model.to(device), device_ids=[rank]) 
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule 
@@ -130,12 +150,10 @@ def main(args):
     if args.latent_space == True: 
         vae = AutoencoderKL.from_pretrained(args.vae_path).to(device)
 
-
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, )
     print('lr: ', args.lr)
 
     # Setup data
-    
 
     transform = transforms.Compose([
         transforms.Resize(args.image_size),
@@ -164,6 +182,12 @@ def main(args):
             path=args.anna_path, 
             transform=transform,
         )
+    elif args.dataset_type == "ucf":
+        dataset = UCFDataset(
+            data_path=args.anna_path,
+            sample_size=args.image_size,
+            is_image=args.image_only,
+        ) 
     else:
         pass
 
@@ -197,7 +221,6 @@ def main(args):
     for epoch in range(args.epochs): 
         sampler.set_epoch(epoch) 
         running_loss = 0
-        train_steps = 0
         with tqdm(enumerate(loader), total=len(loader)) as tq:
             for data_iter_step, samples in tq: 
                 # we use a per iteration (instead of per epoch) lr scheduler
@@ -206,17 +229,25 @@ def main(args):
                 
                 x = samples[0].to(device) 
                 y = samples[1]
-
+                b = x.size(0)
                 with torch.no_grad():
                     context = clip.encode(y)
 
+                f = 0
+                if args.image_only == False: 
+                    f = x.size(1) 
+                    x = rearrange(x, "b f c h w -> (b f) c h w") 
+                
                 if args.latent_space == True: 
                     # Map input images to latent space + normalize latents:
                     x = vae.encode(x).latent_dist.sample().mul_(0.18215)
 
-                t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device) 
-                
-                model_kwargs = dict(context=context) 
+                t = torch.randint(0, diffusion.num_timesteps, (b,), device=device) 
+                if args.image_only == False: 
+                    t = repeat(t, 'b -> (b f)', f=f)
+                    context = repeat(context, 'b l d -> (b f) l d', f=f)
+
+                model_kwargs = dict(context=context, f=f) 
                 loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
                 loss = loss_dict["loss"].mean()
                 loss_value = loss.item() 
@@ -228,6 +259,14 @@ def main(args):
                     opt.zero_grad()
                 
                 loss.backward()
+                
+
+                """
+                for n, p in model.named_parameters():
+                    if p.grad is None:
+                        print(n, "found unused param")
+                """
+
                 opt.step()
                 update_ema(ema, model.module)
 
@@ -236,7 +275,7 @@ def main(args):
                 train_steps += 1
 
                 tq.set_description('Epoch %i' % epoch) 
-                tq.set_postfix(loss=running_loss / train_steps)
+                tq.set_postfix(loss=running_loss / (data_iter_step + 1))
                 # Save DiT checkpoint:
                 if train_steps % args.ckpt_every == 0 and train_steps > 0:
                     if rank == 0:
@@ -261,7 +300,7 @@ def main(args):
                 if train_steps % args.eval_steps == 0: 
                     dist.barrier()
                     if rank == 0:
-                        diffusion_eval = create_diffusion(str(10)) 
+                        diffusion_eval = create_diffusion(str(250)) 
                         n = context.size(0)
 
                         if args.latent_space == True: 
@@ -293,10 +332,12 @@ if __name__ == "__main__":
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--anna-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results")
-    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'laion', 'mj'], default='mscoco')
+    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'ucf', 'mj'], default='mscoco')
+    parser.add_argument("--image-only", type=bool, default=False)
     parser.add_argument("--resume", type=str, default=None)
     
-    parser.add_argument("--model", type=str, choices=list(VeSpa_models.keys()), default="VeSpa-L/2")
+    parser.add_argument("--model", type=str, default="VeSpa-L/2")
+    parser.add_argument("--model-type", type=str, default="image")
     parser.add_argument("--image-size", type=int, choices=[256, 512, 64, 32], default=256)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--epochs", type=int, default=1000)

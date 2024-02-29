@@ -82,8 +82,7 @@ if __name__ == "__main__":
     parser.add_argument("--cfg-scale", type=float, default=1.5) 
     parser.add_argument("--num-sampling-steps", type=int, default=250) 
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results/VeSpa-H-2-mscoco-256/checkpoints/0002500.pt",) 
-    
+    parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results/VeSpa-H-2-mj-256/checkpoints/0120000.pt",) 
     parser.add_argument('--latent_space', type=bool, default=True,) 
     parser.add_argument('--vae_path', type=str, default='/TrainData/Multimodal/zhengcong.fei/dis/vae') 
     args = parser.parse_args()

@@ -5,6 +5,7 @@ import einops
 from functools import partial
 from torch import Tensor
 from typing import Optional
+from einops import rearrange, repeat
 
 from mamba_ssm.modules.mamba_simple import Mamba 
 from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
@@ -345,7 +346,7 @@ class FinalLayer(nn.Module):
 
 
 
-class VeSpaModel(nn.Module): 
+class VeSpaImageModel(nn.Module): 
     # cfg implementation
     def __init__(
         self,
@@ -370,7 +371,7 @@ class VeSpaModel(nn.Module):
         mlp_time_embed=True,
         clip_dim=768, num_clip_token=77, 
         conv=True, skip=True,
-        use_adln=False,
+        use_adln=True,
         **kwargs
     ): 
         super().__init__()
@@ -525,8 +526,9 @@ class VeSpaModel(nn.Module):
         x = hidden_states
         # x = self.norm_f(hidden_states)
         # x = self.decoder_pred(x)
+
         if self.use_adln:
-            x = self.final_layer(x, c=torch.cat((time_token, context_token,), dim=1))
+            x = self.final_layer(x, c=context_token.mean(dim=1,keepdim=True) + time_token)
         else:
             x = self.final_layer(x)
 
@@ -554,8 +556,292 @@ class VeSpaModel(nn.Module):
 
 
 
-def vespa_h_2(**kwargs): 
-    model = VeSpaModel(
+class VeSpaVideoModel(nn.Module): 
+    # cfg implementation
+    def __init__(
+        self,
+        img_size=224,
+        patch_size=16,
+        embed_dim=192,
+        channels=3,
+        depth=12,
+        ssm_cfg=None,
+        drop_rate=0.,
+        drop_path_rate=0.1,
+        norm_epsilon: float = 1e-5, 
+        rms_norm: bool = True, 
+        initializer_cfg=None,
+        fused_add_norm=True,
+        residual_in_fp32=True,
+        device=None,
+        dtype=None,
+        bimamba_type="v2",
+        learn_sigma=True,
+        if_cls_token=False,
+        mlp_time_embed=True,
+        clip_dim=768, num_clip_token=77, 
+        conv=True, skip=True,
+        use_adln=True,
+        enable_temporal_layers=False, 
+        **kwargs
+    ): 
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.channels = channels
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.use_adln = use_adln
+        self.enable_temporal_layers = enable_temporal_layers 
+
+        factory_kwargs = {"device": device, "dtype": dtype}
+        # add factory_kwargs into kwargs
+        kwargs.update(factory_kwargs) 
+
+        self.patch_embed = PatchEmbed(patch_size=patch_size, in_chans=channels, embed_dim=embed_dim)
+        num_patches = (img_size // patch_size) ** 2
+        
+        self.time_embed = nn.Sequential(
+            nn.Linear(embed_dim, 4 * embed_dim),
+            nn.SiLU(),
+            nn.Linear(4 * embed_dim, embed_dim),
+        ) if mlp_time_embed else nn.Identity()
+        
+        self.context_embed = nn.Linear(clip_dim, embed_dim)
+        self.extras = 1 + num_clip_token 
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.extras + num_patches, embed_dim)) 
+
+         # TODO: release this comment
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        # import ipdb;ipdb.set_trace()
+        inter_dpr = [0.0] + dpr
+        self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
+        
+        self.in_blocks = nn.ModuleList([
+            create_block(
+                embed_dim,
+                ssm_cfg=ssm_cfg,
+                norm_epsilon=norm_epsilon,
+                rms_norm=rms_norm,
+                residual_in_fp32=residual_in_fp32,
+                fused_add_norm=fused_add_norm,
+                layer_idx=i,
+                bimamba_type=bimamba_type,
+                drop_path=inter_dpr[i],
+                **factory_kwargs,
+            )
+            for i in range(depth // 2)])
+
+
+        if enable_temporal_layers == True: 
+            self.in_temp_blocks = nn.ModuleList([
+            create_block(
+                embed_dim,
+                ssm_cfg=ssm_cfg,
+                norm_epsilon=norm_epsilon,
+                rms_norm=rms_norm,
+                residual_in_fp32=residual_in_fp32,
+                fused_add_norm=fused_add_norm,
+                layer_idx=i,
+                bimamba_type=bimamba_type,
+                drop_path=inter_dpr[i],
+                **factory_kwargs,
+            )
+            for i in range(depth // 2)])
+
+        self.mid_block = create_block(
+                embed_dim,
+                ssm_cfg=ssm_cfg,
+                norm_epsilon=norm_epsilon,
+                rms_norm=rms_norm,
+                residual_in_fp32=residual_in_fp32,
+                fused_add_norm=fused_add_norm,
+                layer_idx=depth // 2,
+                bimamba_type=bimamba_type,
+                drop_path=inter_dpr[depth // 2],
+                **factory_kwargs,
+            )
+
+        self.out_blocks = nn.ModuleList([
+            create_block(
+                embed_dim,
+                ssm_cfg=ssm_cfg,
+                norm_epsilon=norm_epsilon,
+                rms_norm=rms_norm,
+                residual_in_fp32=residual_in_fp32,
+                fused_add_norm=fused_add_norm,
+                layer_idx=i + depth // 2 + 1,
+                bimamba_type=bimamba_type,
+                drop_path=inter_dpr[i + depth // 2 + 1],
+                skip=skip,
+                **factory_kwargs,
+            )
+            for i in range(depth // 2)])
+
+        if enable_temporal_layers == True: 
+            self.out_temp_blocks = nn.ModuleList([
+            create_block(
+                embed_dim,
+                ssm_cfg=ssm_cfg,
+                norm_epsilon=norm_epsilon,
+                rms_norm=rms_norm,
+                residual_in_fp32=residual_in_fp32,
+                fused_add_norm=fused_add_norm,
+                layer_idx=i,
+                bimamba_type=bimamba_type,
+                drop_path=inter_dpr[i],
+                **factory_kwargs,
+            )
+            for i in range(depth // 2)])
+
+
+        # output head
+        self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
+            embed_dim, eps=norm_epsilon, **factory_kwargs
+        )
+
+        if learn_sigma == True: 
+            self.patch_dim = patch_size ** 2 * channels * 2
+        else: 
+            self.patch_dim = patch_size ** 2 * channels
+        
+        self.out_channels = channels * 2 if learn_sigma else channels
+        # self.decoder_pred = nn.Linear(embed_dim, self.patch_dim, bias=True) 
+
+        self.final_layer = FinalLayer(embed_dim, patch_size, self.out_channels, self.use_adln)    
+        # original init
+        # self.apply(segm_init_weights) 
+        # mamba init
+        self.apply(
+            partial(
+                _init_weights,
+                n_layer=depth,
+                **(initializer_cfg if initializer_cfg is not None else {}),
+            )
+        )
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'pos_embed'}
+    
+
+    def temporal_parameters(self): 
+        output = []
+        for block in self.in_temp_blocks: 
+            if block: 
+                output.extend(block.parameters()) 
+        
+        for block in self.out_temp_blocks: 
+            if block: 
+                output.extend(block.parameters()) 
+        return output 
+
+    
+    def forward(self, x, timesteps, f=0, context=None, inference_params=None, ):
+        
+        is_video = f > 0
+
+        x = self.patch_embed(x)
+        B, L, D = x.shape
+
+        time_token = self.time_embed(timestep_embedding(timesteps, self.embed_dim))
+        time_token = time_token.unsqueeze(dim=1)
+        
+        context_token = self.context_embed(context)
+
+        x = torch.cat((time_token, context_token, x), dim=1)
+
+        x = x + self.pos_embed
+
+        # mamba impl
+        residual = None
+        hidden_states = x
+        skips = []
+        n = x.size(1)
+
+        if is_video == True and self.enable_temporal_layers == True: 
+            for blk, temp_blk in zip(self.in_blocks, self.in_temp_blocks): 
+                hidden_states, residual = blk(hidden_states, residual, inference_params=inference_params) 
+                skips.append(hidden_states)
+                hidden_states_pre = rearrange(hidden_states, "(b f) n c -> (b n) f c", f=f)
+                hidden_states, _ = temp_blk(hidden_states_pre,) 
+                hidden_states += hidden_states_pre 
+                hidden_states = rearrange(hidden_states, "(b n) f c-> (b f) n c", n=n)
+
+
+            hidden_states, residual = self.mid_block(hidden_states, residual, inference_params=inference_params)
+
+            for blk, temp_blk in zip(self.out_blocks, self.out_temp_blocks): 
+                hidden_states, residual = blk(hidden_states, residual, inference_params=inference_params, skip=skips.pop()) 
+                hidden_states_pre = rearrange(hidden_states, "(b f) n c -> (b n) f c", f=f)
+                hidden_states, _ = temp_blk(hidden_states_pre,) 
+                hidden_states += hidden_states_pre 
+                hidden_states = rearrange(hidden_states, "(b n) f c-> (b f) n c", n=n)
+
+        else: 
+            for blk in self.in_blocks: 
+                hidden_states, residual = blk(hidden_states, residual, inference_params=inference_params) 
+                skips.append(hidden_states)
+
+            hidden_states, residual = self.mid_block(hidden_states, residual, inference_params=inference_params)
+
+            for blk in self.out_blocks:
+                hidden_states, residual = blk(hidden_states, residual, inference_params=inference_params, skip=skips.pop())
+                
+
+        if not self.fused_add_norm:
+            if residual is None:
+                residual = hidden_states
+            else:
+                residual = residual + self.drop_path(hidden_states)
+            hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
+        else:
+            # Set prenorm=False here since we don't need the residual
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+            hidden_states = fused_add_norm_fn(
+                self.drop_path(hidden_states),
+                self.norm_f.weight,
+                self.norm_f.bias,
+                eps=self.norm_f.eps,
+                residual=residual,
+                prenorm=False,
+                residual_in_fp32=self.residual_in_fp32,
+            )
+        
+        x = hidden_states
+        # x = self.norm_f(hidden_states)
+        # x = self.decoder_pred(x)
+        if self.use_adln:
+            x = self.final_layer(x, c=context_token.mean(dim=1, keepdim=True) + time_token)
+        else:
+            x = self.final_layer(x)
+
+        assert x.size(1) == self.extras + L
+        x = x[:, self.extras:, :]
+        x = unpatchify(x, self.out_channels)
+        # x = self.final_layer(x)
+        return x
+
+
+    def forward_with_cfg(self, x, timesteps, cfg_scale=1.5, context=None):
+
+        half = x[: len(x) // 2]
+        combined = torch.cat([half, half], dim=0)
+        model_out = self.forward(combined, timesteps, context)
+        # For exact reproducibility reasons, we apply classifier-free guidance on only
+        # three channels by default. The standard approach to cfg applies it to all channels.
+        # This can be done by uncommenting the following line and commenting-out the line following that.
+        # eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+        eps, rest = model_out[:, :3], model_out[:, 3:]
+        cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
+        half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
+        eps = torch.cat([half_eps, half_eps], dim=0)
+        return torch.cat([eps, rest], dim=1)
+
+
+
+def vespa_image_h_2(**kwargs): 
+    model = VeSpaImageModel(
         patch_size=2,
         embed_dim=1536,
         depth=48,
@@ -564,8 +850,8 @@ def vespa_h_2(**kwargs):
     return model 
 
 
-def vespa_h_4(**kwargs): 
-    model = VeSpaModel(
+def vespa_image_h_4(**kwargs): 
+    model = VeSpaImageModel(
         patch_size=4,
         embed_dim=1536,
         depth=48,
@@ -574,7 +860,32 @@ def vespa_h_4(**kwargs):
     return model 
 
 
+def vespa_video_l_2(**kwargs): 
+    model = VeSpaVideoModel(
+        patch_size=2,
+        embed_dim=1024,
+        depth=48,
+        **kwargs
+    )
+    return model 
 
-VeSpa_models = {
-    "VeSpa-H/2": vespa_h_2, "VeSpa-H/4": vespa_h_4, 
+
+
+def vespa_video_m_2(**kwargs): 
+    model = VeSpaVideoModel(
+        patch_size=2,
+        embed_dim=768,
+        depth=48,
+        **kwargs
+    )
+    return model 
+
+
+
+VeSpa_image_models = {
+    "VeSpa-H/2": vespa_image_h_2, "VeSpa-H/4": vespa_image_h_4, 
+}
+
+VeSpa_video_models = {
+    "VeSpa-L/2": vespa_video_l_2, "VeSpa-M/2": vespa_video_m_2, 
 }

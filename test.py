@@ -1,3 +1,4 @@
+import os 
 import torch
 import torchvision
 
@@ -68,10 +69,12 @@ def test_clip():
     tokenizer = CLIPTokenizer.from_pretrained(tokenizer_path)
     transformer = CLIPTextModel.from_pretrained(clip_path)
 
-    text = ['vespa is all you need', '']
+    text = ['HighJump']
     batch_encoding = tokenizer(text, truncation=True, max_length=77, return_length=True,
                                         return_overflowing_tokens=False, padding="max_length", return_tensors="pt")
     tokens = batch_encoding["input_ids"]
+    print(tokens.size())
+    tokens = tokenizer.convert_ids_to_tokens(tokens.tolist()[0])
     print(tokens)
 
 
@@ -111,7 +114,65 @@ def test_mjdataset():
     dataset = MJDataset(path=data_path)
     print(dataset[0])
 
-test_mjdataset()
+
+def test_video(): 
+    from einops import rearrange
+    f = 6 
+    frames = torch.randn(4 * f, 64*64, 768) 
+    print(frames.size())
+    frames = rearrange(frames, "(b f) n d -> (b n) f d", f=f)
+    print(frames.size())
+    frames = rearrange(frames, "(b n) f d -> (b f) n d", b=4)
+    print(frames.size())
+
+
+def ucf_dataset_create(): 
+    data_path = '/TrainData/Multimodal/public/datasets_gen/video_dataset/UCF-101'
+    import json 
+    file_list_path = os.listdir(data_path) 
+    print(file_list_path) 
+    
+    video_test_list = []
+    for file in file_list_path: 
+        avi_path_list = os.listdir(os.path.join(data_path, file))
+        for avi_path in avi_path_list: 
+            video_test_list.append(
+                {
+                    "video": os.path.join(data_path, file, avi_path),
+                    "text": file,
+                }
+            )
+    print(len(video_test_list))
+    target_path = '/TrainData/Multimodal/zhengcong.fei/vespa/data/ucf.json'
+    with open(target_path, 'w') as f: 
+        json.dump(video_test_list, f, indent=4)
+
+
+def test_ucf_dataset(): 
+    from tools.dataset import UCFDataset 
+    data_path =  '/TrainData/Multimodal/zhengcong.fei/vespa/data/ucf.json'
+    dataset = UCFDataset(data_path, is_image=False)
+    print(dataset[1][0].size())
+    # ([8, 3, 64, 64])
+
+
+
+def test_video_vespa(): 
+    from models_vespa import VeSpa_video_models
+    model = VeSpa_video_models['VeSpa-M/2'](
+        img_size=64,
+        channels=32,
+        enable_temporal_layers=True,
+    ) 
+    print(model)
+    parameters_sum = sum(x.numel() for x in model.parameters())
+    print(parameters_sum / 1000000.0, "M")
+
+
+test_video_vespa()
+# test_ucf_dataset()
+# test_video()
+# test_mjdataset()
 # test_clip() 
 # test_vespa() 
 # test_coco()
