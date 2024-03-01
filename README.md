@@ -29,5 +29,5 @@ torchrun --nnodes=1 --nproc_per_node=N train.py \
 --data-path  /path/to/datat \
 --anna-path /path/to/annate \
 --image-size 64 \
---lr 1e-4 \
+--lr 1e-4
 ```
