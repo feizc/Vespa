@@ -24,7 +24,7 @@ from diffusers.models import AutoencoderKL
 from einops import rearrange, repeat
 from models_vespa import VeSpa_image_models, VeSpa_video_models 
 from diffusion import create_diffusion
-from tools.dataset import MSCOCODataset, MJDataset, UCFDataset 
+from tools.dataset import MSCOCODataset, MJDataset, UCFDataset, FaceDataset
 from clip import FrozenCLIPEmbedder
 
 
@@ -48,6 +48,12 @@ def requires_grad(model, flag=True):
     for p in model.parameters():
         p.requires_grad = flag
 
+
+def zero_module(module):
+    # Zero out the parameters of a module and return it.
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
 
 
 def center_crop_arr(pil_image, image_size):
@@ -102,7 +108,7 @@ def main(args):
         os.makedirs(args.results_dir, exist_ok=True) 
         experiment_index = len(glob(f"{args.results_dir}/*"))
         model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-        experiment_dir = f"{args.results_dir}/{model_string_name}-{args.dataset_type}-{args.model_type}-{args.image_size}"  # Create an experiment folder
+        experiment_dir = f"{args.results_dir}/{model_string_name}-{args.dataset_type}-{args.model_type}-{args.image_only}"  # Create an experiment folder
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
         os.makedirs(checkpoint_dir, exist_ok=True)
     
@@ -141,7 +147,9 @@ def main(args):
     if args.image_only == False: 
         model.requires_grad_(False)
         temporal_params = model.temporal_parameters()
-        for p in temporal_params:
+        for p in temporal_params: 
+            # zero out for temporal
+            p.detach().zero_() 
             p.requires_grad_(True) 
 
     model = DDP(model.to(device), device_ids=[rank]) 
@@ -184,6 +192,12 @@ def main(args):
         )
     elif args.dataset_type == "ucf":
         dataset = UCFDataset(
+            data_path=args.anna_path,
+            sample_size=args.image_size,
+            is_image=args.image_only,
+        ) 
+    elif args.dataset_type == "face":
+        dataset = FaceDataset(
             data_path=args.anna_path,
             sample_size=args.image_size,
             is_image=args.image_only,
@@ -332,7 +346,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--anna-path", type=str, required=True)
     parser.add_argument("--results-dir", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results")
-    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'ucf', 'mj'], default='mscoco')
+    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'ucf', 'mj', 'face'], default='mscoco')
     parser.add_argument("--image-only", type=bool, default=False)
     parser.add_argument("--resume", type=str, default=None)
     

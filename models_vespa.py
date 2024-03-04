@@ -823,11 +823,10 @@ class VeSpaVideoModel(nn.Module):
         return x
 
 
-    def forward_with_cfg(self, x, timesteps, cfg_scale=1.5, context=None):
-
+    def forward_with_cfg(self, x, timesteps, cfg_scale=1.5, context=None, f=0):
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
-        model_out = self.forward(combined, timesteps, context)
+        model_out = self.forward(combined, timesteps, context=context, f=f)
         # For exact reproducibility reasons, we apply classifier-free guidance on only
         # three channels by default. The standard approach to cfg applies it to all channels.
         # This can be done by uncommenting the following line and commenting-out the line following that.

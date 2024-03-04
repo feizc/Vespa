@@ -9,7 +9,7 @@ from torchvision.utils import save_image
 from diffusers.models import AutoencoderKL
 
 from diffusion import create_diffusion
-from models_vespa import VeSpa_models 
+from models_vespa import VeSpa_image_models, VeSpa_video_models 
 from clip import FrozenCLIPEmbedder
 
 
@@ -21,14 +21,22 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if args.latent_space == True: 
-        model = VeSpa_models[args.model](
-            img_size=args.image_size // 8,
-            channels=4,
+        img_size = args.image_size // 8
+        channels = 4
+    else: 
+        img_size=args.image_size
+        channels = 3
+
+    if args.model_type == 'image': 
+        model = VeSpa_image_models[args.model](
+            img_size=img_size,
+            channels=channels,
         ) 
     else:
-        model = VeSpa_models[args.model](
-            img_size=args.image_size,
-            channels=3,
+        model = VeSpa_video_models[args.model](
+            img_size=img_size,
+            channels=channels,
+            enable_temporal_layers= not args.image_only, 
         ) 
 
     checkponit = torch.load(args.ckpt, map_location=lambda storage, loc: storage)['ema'] 
@@ -47,8 +55,9 @@ def main(args):
     clip.eval()
     clip = clip.to(device)
     
-    n = 4
-    text = ['a cute cat in grass', 'water with ocean', 'a cute cat in grass', 'water with ocean',]
+    n = 16
+    # text = ['sad',] * n
+    text = ['Skiing',] * n
     
     if args.latent_space == True: 
         z = torch.randn(n, 4, args.image_size//8, args.image_size//8, device=device)
@@ -61,29 +70,33 @@ def main(args):
     with torch.no_grad(): 
         context = clip.encode(text)
 
-    model_kwargs = dict(context=context,)
+    model_kwargs = dict(context=context, f=8)
     # Sample images:
     samples = diffusion.p_sample_loop(
         model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
     )
     eval_samples, _ = samples.chunk(2, dim=0) 
-    
+    # eval_samples = samples
+
     if args.latent_space == True: 
         eval_samples = vae.decode(eval_samples / 0.18215).sample
     
-    save_image(eval_samples, "sample.png", nrow=4, normalize=True, value_range=(-1, 1))
+    save_image(eval_samples, "sample.png", nrow=8, normalize=True, value_range=(-1, 1))
 
 
 
 if __name__ == "__main__": 
     parser = argparse.ArgumentParser() 
-    parser.add_argument("--model", type=str, choices=list(VeSpa_models.keys()), default="VeSpa-H/2")
-    parser.add_argument("--image-size", type=int, choices=[32, 64, 256, 512], default=256) 
+    parser.add_argument("--model", type=str, default="VeSpa-M/2")
+    parser.add_argument("--model-type", type=str, default="video")
+    parser.add_argument("--image-size", type=int, choices=[32, 64, 256, 512], default=64) 
+    parser.add_argument("--image-only", type=bool, default=False)
     parser.add_argument("--cfg-scale", type=float, default=1.5) 
     parser.add_argument("--num-sampling-steps", type=int, default=250) 
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results/VeSpa-H-2-mj-256/checkpoints/0120000.pt",) 
-    parser.add_argument('--latent_space', type=bool, default=True,) 
+    # parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results/VeSpa-M-2-face-video-False/checkpoints_0/0016000.pt",) 
+    parser.add_argument("--ckpt", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results/VeSpa-M-2-ucf-video-False/checkpoints/0024000.pt",) 
+    parser.add_argument('--latent_space', type=bool, default=False,) 
     parser.add_argument('--vae_path', type=str, default='/TrainData/Multimodal/zhengcong.fei/dis/vae') 
     args = parser.parse_args()
 

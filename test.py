@@ -169,7 +169,33 @@ def test_video_vespa():
     print(parameters_sum / 1000000.0, "M")
 
 
-test_video_vespa()
+
+def face_create(): 
+    import json 
+    data_path = '/TrainData/Multimodal/public/datasets_gen/video_dataset/face/training_AV/RAVDESS/train'
+    file_list_path = os.listdir(data_path)
+    print(file_list_path)
+    video_test_list = []
+
+    for file in file_list_path: 
+        video_test_list.append(
+            {
+                "video": os.path.join(data_path, file),
+                "text": file[:-4].split('_')[2].lower(),
+            }
+        )
+    # print(video_test_list)
+    
+    print(len(video_test_list))
+    target_path = '/TrainData/Multimodal/zhengcong.fei/vespa/data/face.json'
+    with open(target_path, 'w') as f: 
+        json.dump(video_test_list, f, indent=4)
+    from tools.dataset import FaceDataset 
+    dataset = FaceDataset(target_path, is_image=False)
+    print(dataset[1][0].size())
+
+face_create()
+# test_video_vespa()
 # test_ucf_dataset()
 # test_video()
 # test_mjdataset()
