@@ -299,7 +299,7 @@ def main(args):
                     opt.zero_grad()
                 
                 loss.backward()
-            
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 opt.step()
                 update_ema(ema, model.module)
 
