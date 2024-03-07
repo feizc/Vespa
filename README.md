@@ -1,6 +1,12 @@
 ## Vespa🐝: Video Diffusion State Space Models
 
 This repo contains PyTorch model definitions, pre-trained weights and training/sampling code for our paper video diffusion state space models. 
+Our model use clip/t5 as text encoder and mamba-based diffusion model. 
+
+
+![ucf](https://github.com/feizc/Vespa/assets/37614046/bad6841c-0e5a-4717-a70b-47d7d97e1a42)
+
+![sad](https://github.com/feizc/Vespa/assets/37614046/5bcd0cba-9cb0-4cba-ab36-801539722709)
 
 
 ### 1. Environments
@@ -31,3 +37,28 @@ torchrun --nnodes=1 --nproc_per_node=N train.py \
 --image-size 64 \
 --lr 1e-4
 ```
+
+
+### 3. Evaluation
+
+We include a [`sample.py`](sample.py) script which samples images from a DiS model. Besides, we support other metrics evaluation, e.g., FLOPS and model parameters, in [`test.py`](test.py) script. 
+
+```bash
+python sample.py \
+--model VeSpa-M/2 \
+--ckpt /path/to/model \
+--image-size 64 
+```
+
+### 4. BibTeX
+
+```bibtex
+@article{FeiVespa2024,
+  title={Video Diffusion State Space Models},
+  author={Zhengcong Fei, Mingyuan Fan, Changqian Yu, Jusnshi Huang},
+  year={2024},
+  journal={arXiv preprint},
+}
+```
+
+
