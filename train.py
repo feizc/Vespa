@@ -25,7 +25,9 @@ from einops import rearrange, repeat
 from models_vespa import VeSpa_image_models, VeSpa_video_models 
 from diffusion import create_diffusion
 from tools.dataset import MSCOCODataset, MJDataset, UCFDataset, FaceDataset
-from clip import FrozenCLIPEmbedder
+from clip import FrozenCLIPEmbedder 
+from t5 import T5Embedder 
+
 
 
 @torch.no_grad()
@@ -117,18 +119,29 @@ def main(args):
         channels = 4
     else: 
         img_size=args.image_size
-        channels = 3
+        channels = 3 
+    
+    if args.text_encoder_type == 'clip': 
+        num_clip_token = 77 
+        clip_dim = 768
+    else:
+        num_clip_token = 120 
+        clip_dim = 4096
 
     if args.model_type == 'image': 
         model = VeSpa_image_models[args.model](
             img_size=img_size,
             channels=channels,
+            num_clip_token=num_clip_token,
+            clip_dim=clip_dim,
         ) 
     else:
         model = VeSpa_video_models[args.model](
             img_size=img_size,
             channels=channels,
             enable_temporal_layers= not args.image_only, 
+            num_clip_token=num_clip_token,
+            clip_dim=clip_dim,
         ) 
 
     if args.resume is not None:
@@ -149,7 +162,8 @@ def main(args):
         temporal_params = model.temporal_parameters()
         for p in temporal_params: 
             # zero out for temporal
-            p.detach().zero_() 
+            # p.detach().zero_() 
+            p.data.fill_(0) 
             p.requires_grad_(True) 
 
     model = DDP(model.to(device), device_ids=[rank]) 
@@ -170,13 +184,18 @@ def main(args):
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
     ])
-    
-    clip = FrozenCLIPEmbedder(
-        path='/TrainData/Multimodal/michael.fan/ckpts/sdxl-turbo',
-        device=device,
-    )
-    clip.eval()
-    clip = clip.to(device)
+    if args.text_encoder_type == 'clip': 
+        text_encoder = FrozenCLIPEmbedder(
+            path='/TrainData/Multimodal/michael.fan/ckpts/sdxl-turbo',
+            device=device,
+        )
+        text_encoder.eval()
+        text_encoder = text_encoder.to(device)
+    elif args.text_encoder_type == 't5':
+        t5_path = '/TrainData/Multimodal/michael.fan/ckpts/DeepFloyd/t5-v1_1-xxl' 
+        text_encoder = T5Embedder(device='cuda', local_cache=True, cache_dir=t5_path) 
+    else:
+        pass 
     
 
     if args.dataset_type == "mscoco": 
@@ -244,8 +263,12 @@ def main(args):
                 x = samples[0].to(device) 
                 y = samples[1]
                 b = x.size(0)
-                with torch.no_grad():
-                    context = clip.encode(y)
+                with torch.no_grad(): 
+                    if args.text_encoder_type == 'clip': 
+                        context = text_encoder.encode(y)
+                    else:
+                        context, _ = text_encoder.get_text_embeddings(y)
+                        context = context.float() 
 
                 f = 0
                 if args.image_only == False: 
@@ -261,7 +284,10 @@ def main(args):
                     t = repeat(t, 'b -> (b f)', f=f)
                     context = repeat(context, 'b l d -> (b f) l d', f=f)
 
-                model_kwargs = dict(context=context, f=f) 
+                if args.model_type == 'image': 
+                    model_kwargs = dict(context=context, ) 
+                else:
+                    model_kwargs = dict(context=context, f=f) 
                 loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
                 loss = loss_dict["loss"].mean()
                 loss_value = loss.item() 
@@ -273,14 +299,7 @@ def main(args):
                     opt.zero_grad()
                 
                 loss.backward()
-                
-
-                """
-                for n, p in model.named_parameters():
-                    if p.grad is None:
-                        print(n, "found unused param")
-                """
-
+            
                 opt.step()
                 update_ema(ema, model.module)
 
@@ -348,6 +367,7 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results")
     parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'ucf', 'mj', 'face'], default='mscoco')
     parser.add_argument("--image-only", type=bool, default=False)
+    parser.add_argument("--text_encoder_type", type=str, choices=['clip', 't5'], default='clip')
     parser.add_argument("--resume", type=str, default=None)
     
     parser.add_argument("--model", type=str, default="VeSpa-L/2")
@@ -367,5 +387,6 @@ if __name__ == "__main__":
 
     parser.add_argument('--latent_space', type=bool, default=False,) 
     parser.add_argument('--vae_path', type=str, default='/TrainData/Multimodal/zhengcong.fei/dis/vae') 
+    
     args = parser.parse_args()
     main(args)

@@ -78,6 +78,18 @@ def test_clip():
     print(tokens)
 
 
+def test_t5(): 
+    from t5 import T5Embedder 
+    t5_path = '/TrainData/Multimodal/michael.fan/ckpts/DeepFloyd/t5-v1_1-xxl' 
+    
+    t5 = T5Embedder(device='cuda', local_cache=True, cache_dir=t5_path) 
+
+    prompts = ['state space models for video generation', 'mamba model is good'] 
+    with torch.no_grad(): 
+        caption_embs, emb_masks = t5.get_text_embeddings(prompts)
+        caption_embs = caption_embs.float() # [:, None]
+        print(caption_embs.size(), emb_masks.size())
+    
 
 def test_vespa(): 
     from models_vespa import timestep_embedding, VeSpa_models
@@ -194,7 +206,7 @@ def face_create():
     dataset = FaceDataset(target_path, is_image=False)
     print(dataset[1][0].size())
 
-face_create()
+# face_create()
 # test_video_vespa()
 # test_ucf_dataset()
 # test_video()
@@ -206,4 +218,5 @@ face_create()
 # test_imagenet1k()
 # test_celeba()
 # test_fid_score()
-# test_vae()
+# test_vae() 
+test_t5()
