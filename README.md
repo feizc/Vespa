@@ -2,6 +2,8 @@
 
 This repo contains PyTorch model definitions, pre-trained weights and training/sampling code for our paper video diffusion state space models. 
 Our model use clip/t5 as text encoder and mamba-based diffusion model. 
+Its distinctive advantage lies in ites reduced spatial complexity, which renders it exceptionally adept at processing long videos or high-resukution images, eliminating the necessity for window operations. 
+
 
 ![sad](https://github.com/feizc/Vespa/assets/37614046/5bcd0cba-9cb0-4cba-ab36-801539722709)
 
