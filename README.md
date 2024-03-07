@@ -3,9 +3,6 @@
 This repo contains PyTorch model definitions, pre-trained weights and training/sampling code for our paper video diffusion state space models. 
 Our model use clip/t5 as text encoder and mamba-based diffusion model. 
 
-
-![ucf](https://github.com/feizc/Vespa/assets/37614046/bad6841c-0e5a-4717-a70b-47d7d97e1a42)
-
 ![sad](https://github.com/feizc/Vespa/assets/37614046/5bcd0cba-9cb0-4cba-ab36-801539722709)
 
 
@@ -20,6 +17,7 @@ Our model use clip/t5 as text encoder and mamba-based diffusion model.
 - Install ``causal_conv1d`` and ``mamba``
   - `pip install -e causal_conv1d`
   - `pip install -e mamba`
+
 
 ### 2. Training 
 
@@ -47,7 +45,8 @@ We include a [`sample.py`](sample.py) script which samples images from a DiS mod
 python sample.py \
 --model VeSpa-M/2 \
 --ckpt /path/to/model \
---image-size 64 
+--image-size 64 \
+--prompt sad 
 ```
 
 ### 4. BibTeX
@@ -60,5 +59,15 @@ python sample.py \
   journal={arXiv preprint},
 }
 ```
+
+
+### 5. Acknowledgments
+
+The codebase is based on the awesome [DiS](https://github.com/feizc/DiS), [DiT](https://github.com/facebookresearch/DiT), [mamba](https://github.com/state-spaces/mamba), [U-ViT](https://github.com/baofff/U-ViT), and [Vim](https://github.com/hustvl/Vim) repos. 
+
+
+
+
+
 
 
