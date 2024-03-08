@@ -158,12 +158,14 @@ def main(args):
     requires_grad(ema, False)
 
     if args.image_only == False: 
+        print(model)
+        
         model.requires_grad_(False)
         temporal_params = model.temporal_parameters()
         for p in temporal_params: 
             # zero out for temporal
             # p.detach().zero_() 
-            p.data.fill_(0) 
+            # p.data.fill_(0) 
             p.requires_grad_(True) 
 
     model = DDP(model.to(device), device_ids=[rank]) 
