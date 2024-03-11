@@ -57,7 +57,7 @@ python sample.py \
 ```bibtex
 @article{FeiVespa2024,
   title={Video Diffusion State Space Models},
-  author={Zhengcong Fei, Mingyuan Fan, Changqian Yu, Jusnshi Huang},
+  author={Zhengcong Fei, Mingyuan Fan, Yujun Liu, Changqian Yu, Jusnshi Huang},
   year={2024},
   journal={arXiv preprint},
 }
