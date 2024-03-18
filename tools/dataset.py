@@ -76,6 +76,28 @@ class MSCOCODataset(Dataset):
         return image, choice(target)
 
 
+import io
+class wds_process:
+    def __init__(self, transform=None):
+        if transform == None: 
+            self.transform = transforms.Compose([
+                transforms.Resize((512, 512)),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
+            ])
+        else:
+            self.transform = transform
+        
+    def __call__(self, sample): 
+        base64_str = sample['jpg']
+        img = Image.open(io.BytesIO(base64_str)).convert("RGB") 
+        img = self.transform(img)
+        # img.save('1.png')
+        json_line = sample['json']
+        text = json.loads(json_line)['caption']
+        return img, text
+
 
 class MJDataset(Dataset): 
     def __init__(self, path, transform): 
@@ -93,7 +115,6 @@ class MJDataset(Dataset):
         img = self.transform(img)
         txt = self.data[img_path]['caption'] 
         return img, txt 
-
 
 
 
@@ -208,3 +229,5 @@ class FaceDataset(Dataset):
         pixel_values, name = self.get_batch(idx) 
         pixel_values = self.pixel_transforms(pixel_values)
         return pixel_values, name 
+
+
