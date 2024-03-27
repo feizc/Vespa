@@ -206,6 +206,97 @@ def face_create():
     dataset = FaceDataset(target_path, is_image=False)
     print(dataset[1][0].size())
 
+
+import torchvision.transforms as transforms
+from PIL import Image
+import io 
+import json 
+
+
+
+def wds_dataset(): 
+    print('test wds dataset')
+
+    train_shards_path_or_url = ['/maindata/data/shared/multimodal/public/dataset_gen/mj580w_wds2/00074.tar',
+                                '/maindata/data/shared/multimodal/public/dataset_gen/mj580w_wds2/00782.tar',]
+    #train_shards_path_or_url = "/maindata/data/shared/multimodal/public/dataset_gen/mj580w_wds2/0{0001..0003}.tar"
+    import webdataset as wds 
+    import io, base64 
+    from PIL import Image 
+    import json 
+    """
+    from tools.dataset import WdsImageTextDataset 
+    dataset = WdsImageTextDataset(urls=train_shards_path_or_url, rank=0, world_size=8) 
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=2, num_workers=4)
+    for batch in dataloader: 
+        print(batch[0].size())
+        break
+    """
+
+    from tools.dataset import wds_process
+    process = wds_process()
+
+    # dataset = wds.WebDataset(train_shards_path_or_url).map(process).batched(batch_size, partial=False)
+    
+    dataset = wds.DataPipeline(
+        wds.SimpleShardList(train_shards_path_or_url),
+        # at this point we have an iterator over all the shards
+        wds.shuffle(100),
+        # add wds.split_by_node here if you are using multiple nodes
+        wds.split_by_worker,
+        wds.split_by_node,
+        # at this point, we have an iterator over the shards assigned to each worker
+        wds.tarfile_to_samples(),
+        # this shuffles the samples in memory
+        wds.shuffle(1000),
+        # this decodes the images and json
+        wds.map(process),
+        wds.shuffle(1000),
+        wds.batched(2)
+    )
+    #loader = wds.WebLoader(dataset, num_workers=4)
+    #loader = loader.ddp_equalize(dataset_size // batch_size)
+    for data in dataset:
+        print(data[0].size())
+        break
+
+
+def test_tag_imagenet(): 
+    from tools.constants import IMAGENET2012_CLASSES 
+    # print(IMAGENET2012_CLASSES)
+    data_path = '/maindata/data/shared/multimodal/public/dataset_img_only/imagenet/data/train'
+    from tqdm import tqdm 
+    import os 
+    import json 
+
+    tgt_path = '/maindata/data/shared/multimodal/zhengcong.fei/code/vespa/data/imagenet_tag.json'
+    file_list = []
+    i = 0
+    for file_path, _, file_names in os.walk(data_path): 
+        # print(file_names)
+        print(i)
+        i += 1
+        for file_name in file_names: 
+            tag_id = file_name.split('_')[0]
+            tag = IMAGENET2012_CLASSES[tag_id]
+            #print(tag)
+            image_path = os.path.join(file_path, file_name)
+            file_list.append(
+                {
+                    "text": tag,
+                    "image": image_path,
+                }
+            )
+            # break
+        # break
+        #if i > 10: break 
+    
+    with open(tgt_path, 'w') as f: 
+        json.dump(file_list, f, indent=4)
+
+test_tag_imagenet()
+
+# wds_dataset()
 # face_create()
 # test_video_vespa()
 # test_ucf_dataset()
@@ -219,4 +310,4 @@ def face_create():
 # test_celeba()
 # test_fid_score()
 # test_vae() 
-test_t5()
+# test_t5()

@@ -118,6 +118,29 @@ class MJDataset(Dataset):
 
 
 
+
+class TagImageNetDataset(Dataset):
+    def __init__(
+        self,
+        path,
+        transform,
+    ):
+        with open(path, 'r') as f: 
+            self.data = json.load(f)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, index): 
+        img_path = self.data[index]['image']
+        img = Image.open(img_path).convert("RGB") 
+        img = self.transform(img)
+        txt = self.data[index]['text'] 
+        return img, txt 
+
+
+
 class UCFDataset(Dataset): 
     def __init__(
         self, 
@@ -172,6 +195,7 @@ class UCFDataset(Dataset):
         pixel_values, name = self.get_batch(idx) 
         pixel_values = self.pixel_transforms(pixel_values)
         return pixel_values, name 
+
 
 
 

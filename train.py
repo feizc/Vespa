@@ -24,7 +24,7 @@ from diffusers.models import AutoencoderKL
 from einops import rearrange, repeat
 from models_vespa import VeSpa_image_models, VeSpa_video_models 
 from diffusion import create_diffusion
-from tools.dataset import MSCOCODataset, MJDataset, UCFDataset, FaceDataset
+from tools.dataset import MSCOCODataset, MJDataset, UCFDataset, FaceDataset, wds_process, TagImageNetDataset
 from clip import FrozenCLIPEmbedder 
 from t5 import T5Embedder 
 
@@ -158,14 +158,12 @@ def main(args):
     requires_grad(ema, False)
 
     if args.image_only == False: 
-        print(model)
-        
         model.requires_grad_(False)
         temporal_params = model.temporal_parameters()
         for p in temporal_params: 
             # zero out for temporal
             # p.detach().zero_() 
-            # p.data.fill_(0) 
+            p.data.fill_(0) 
             p.requires_grad_(True) 
 
     model = DDP(model.to(device), device_ids=[rank]) 
@@ -188,13 +186,13 @@ def main(args):
     ])
     if args.text_encoder_type == 'clip': 
         text_encoder = FrozenCLIPEmbedder(
-            path='/TrainData/Multimodal/michael.fan/ckpts/sdxl-turbo',
+            path='/maindata/data/shared/multimodal/zhengcong.fei/ckpts/playground',
             device=device,
         )
         text_encoder.eval()
         text_encoder = text_encoder.to(device)
     elif args.text_encoder_type == 't5':
-        t5_path = '/TrainData/Multimodal/michael.fan/ckpts/DeepFloyd/t5-v1_1-xxl' 
+        t5_path = '/maindata/data/shared/multimodal/zhengcong.fei/ckpts/DeepFloyd/t5-v1_1-xxl' 
         text_encoder = T5Embedder(device='cuda', local_cache=True, cache_dir=t5_path) 
     else:
         pass 
@@ -211,6 +209,11 @@ def main(args):
             path=args.anna_path, 
             transform=transform,
         )
+    elif args.dataset_type == 'imagenet':
+        dataset = TagImageNetDataset(
+            path=args.anna_path, 
+            transform=transform,
+        )
     elif args.dataset_type == "ucf":
         dataset = UCFDataset(
             data_path=args.anna_path,
@@ -223,26 +226,51 @@ def main(args):
             sample_size=args.image_size,
             is_image=args.image_only,
         ) 
+    elif args.dataset_type == 'wds':
+        import webdataset as wds 
+        tar_list = os.listdir(args.anna_path)
+        urls = [os.path.join(args.anna_path, f) for f in tar_list]
+        process = wds_process(transform)
+        dataset = wds.DataPipeline(
+            wds.SimpleShardList(urls),
+            # at this point we have an iterator over all the shards
+            wds.shuffle(len(urls)),
+            # add wds.split_by_node here if you are using multiple nodes
+            wds.split_by_worker,
+            wds.split_by_node,
+            # at this point, we have an iterator over the shards assigned to each worker
+            wds.tarfile_to_samples(),
+            # this shuffles the samples in memory
+            wds.shuffle(1000),
+            # this decodes the images and json
+            wds.map(process),
+            wds.shuffle(1000),
+            wds.batched(int(args.global_batch_size // dist.get_world_size()),)
+        )
     else:
         pass
+    
+    if args.dataset_type == 'wds': 
+        sampler = None
+        loader = dataset
+    else:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=dist.get_world_size(),
+            rank=rank,
+            shuffle=True,
+            seed=args.global_seed
+        )
 
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=dist.get_world_size(),
-        rank=rank,
-        shuffle=True,
-        seed=args.global_seed
-    )
-
-    loader = DataLoader(
-        dataset,
-        batch_size=int(args.global_batch_size // dist.get_world_size()),
-        shuffle=False,
-        sampler=sampler,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=True
-    )
+        loader = DataLoader(
+            dataset,
+            batch_size=int(args.global_batch_size // dist.get_world_size()),
+            shuffle=False,
+            sampler=sampler,
+            num_workers=args.num_workers,
+            pin_memory=True,
+            drop_last=True
+        )
 
     update_ema(ema, model.module, decay=0) 
     model.train() 
@@ -254,13 +282,19 @@ def main(args):
     running_loss = 0
 
     for epoch in range(args.epochs): 
-        sampler.set_epoch(epoch) 
+        if sampler is not None:
+            sampler.set_epoch(epoch) 
         running_loss = 0
-        with tqdm(enumerate(loader), total=len(loader)) as tq:
+        try: 
+            length = len(loader)
+        except:
+            length = 5800000
+        
+        with tqdm(enumerate(loader), total=length) as tq:
             for data_iter_step, samples in tq: 
                 # we use a per iteration (instead of per epoch) lr scheduler
                 if data_iter_step % args.accum_iter == 0:
-                    adjust_learning_rate(opt, data_iter_step / len(loader) + epoch, args)
+                    adjust_learning_rate(opt, data_iter_step / length + epoch, args)
                 
                 x = samples[0].to(device) 
                 y = samples[1]
@@ -301,7 +335,7 @@ def main(args):
                     opt.zero_grad()
                 
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            
                 opt.step()
                 update_ema(ema, model.module)
 
@@ -366,8 +400,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True)
     parser.add_argument("--anna-path", type=str, required=True)
-    parser.add_argument("--results-dir", type=str, default="/TrainData/Multimodal/zhengcong.fei/vespa/results")
-    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'ucf', 'mj', 'face'], default='mscoco')
+    parser.add_argument("--results-dir", type=str, default="/maindata/data/shared/multimodal/zhengcong.fei/code/vespa/results")
+    parser.add_argument("--dataset-type", type=str, choices=['mscoco', 'ucf', 'mj', 'face', 'wds', 'imagenet'], default='mscoco')
     parser.add_argument("--image-only", type=bool, default=False)
     parser.add_argument("--text_encoder_type", type=str, choices=['clip', 't5'], default='clip')
     parser.add_argument("--resume", type=str, default=None)
@@ -388,7 +422,7 @@ if __name__ == "__main__":
     parser.add_argument('--eval_steps', default=1000, type=int,) 
 
     parser.add_argument('--latent_space', type=bool, default=False,) 
-    parser.add_argument('--vae_path', type=str, default='/TrainData/Multimodal/zhengcong.fei/dis/vae') 
+    parser.add_argument('--vae_path', type=str, default='/maindata/data/shared/multimodal/zhengcong.fei/ckpts/playground/vae') 
     
     args = parser.parse_args()
     main(args)

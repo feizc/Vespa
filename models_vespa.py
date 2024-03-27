@@ -880,6 +880,25 @@ def vespa_video_m_2(**kwargs):
     return model 
 
 
+def vespa_video_h_2(**kwargs): 
+    model = VeSpaVideoModel(
+        patch_size=2,
+        embed_dim=1536,
+        depth=48,
+        **kwargs
+    )
+    return model 
+
+
+def vespa_video_h_4(**kwargs): 
+    model = VeSpaVideoModel(
+        patch_size=4,
+        embed_dim=1536,
+        depth=48,
+        **kwargs
+    )
+    return model 
+
 
 VeSpa_image_models = {
     "VeSpa-H/2": vespa_image_h_2, "VeSpa-H/4": vespa_image_h_4, 
